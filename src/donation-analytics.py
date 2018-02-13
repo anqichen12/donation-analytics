@@ -156,9 +156,6 @@ def main(argv):
         inputFile1 = argv[1]
         inputFile2 = argv[2]
         outputFile = argv[3]
-        #inputFile1 = './input/test2.txt'
-        #inputFile2 = './input/percentile.txt'
-        #outputFile = './output/repeat_donors.txt'
     contribute = extract_cont(inputFile1)
     percentile = int(extract_percentile(inputFile2))
     result_df = res_df(contribute,percentile)
@@ -170,6 +167,5 @@ if __name__=="__main__":
     start_time = time.time()
     argv = sys.argv
     main(argv)
-    #main('python ./src/donation-analytics.py ./input/itcont.txt ./input/percentile.txt ./output/repeat_donors.txt')
     print("--- %s seconds ---" % (time.time() - start_time))
 
