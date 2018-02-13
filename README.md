@@ -8,7 +8,7 @@ A file listing individual campaign contributions for multiple years is given, an
 
 # Instructions to run
 
-The program is written in Python. The imported library are pandas, numpy. Dependecies: 
+The program is written in Python. The imported library are pandas, numpy. Dependecies: Python 3
 
 import csv
 import pandas as pd
