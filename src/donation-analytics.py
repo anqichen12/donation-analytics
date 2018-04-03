@@ -4,6 +4,8 @@ import numpy as np
 import datetime
 import sys
 import time
+import heapq
+import math
 
 def check_cmte(cmte_str):
     if cmte_str:
@@ -47,11 +49,12 @@ def extract_percentile(file):
     return percentile
 
 
-#extract CMTE_ID, NAME, ZIP_CODE, TRANSACTION_DT, TRANSACTION_AMT, OTHER_ID from file
-def extract_cont(file):
+def run(file1, file2, outputFile):
     s = ''
-    outer = []
-    with open(file,"r") as fin:
+    res = []
+    hash1 = {} # key: <name, zip>, value: list {repeated, year, amount, cmte_id}
+    hash2 = {} # key: <cmte_id, zip, year>, value: list {percentile, total, count,minHeap, maxHeap}
+    with open(file1,"r") as fin:
         for line in fin:
             s = s + line
         lst = s.split('\n')
@@ -66,87 +69,124 @@ def extract_cont(file):
             transaction_date = str_arr[13]
             transaction_amount = str_arr[14]
             other_id = str_arr[15]
-            # if cmte_id is not empty, append cmte_id
-            if check_cmte(cmte_id):
-                inner.append(cmte_id)
-            else:
+            if check_cmte(cmte_id) == False:
                 continue
-            # if name is not empty or malformed, append name
-            if check_name(name):
-                inner.append(name)
-            else:
+            if check_name(name) == False:
                 continue
-            # if zip_code format is not empty or fewer than five digits, select first 5 numbers
             if check_zip(zip_code):
                 zip_code = zip_code[:5]
-                inner.append(zip_code)
             else:
                 continue
-            # if transaction_date is not empty or malformed, append transaction_date
-            if check_datetime(transaction_date):
-                inner.append(transaction_date)
-            else:
+            if check_datetime(transaction_date)== False:
                 continue
-            # if transaction_amount is not empty, append transaction_amount
             if check_amount(transaction_amount):
-                inner.append(transaction_amount)
+                transaction_amount = int(transaction_amount)
             else:
                 continue
-            # if other_id is not null, pass the record
             if other_id!='':
                 continue
-            inner.append(other_id)
-            outer.append(inner)
-    return outer
+            repeated = False
+            year = datetime.datetime.strptime(transaction_date,'%m%d%Y').year
+            repeated = hash_repeated(name, zip_code, year, transaction_amount, repeated, cmte_id, hash1)
+            percentile = extract_percentile(file2)
+            minHeap = MinHeap()
+            maxHeap = MaxHeap()
+            if repeated==True:
+                hash_calculation(cmte_id, zip_code, year, minHeap, maxHeap, transaction_amount, percentile, hash2)
+                p = hash2[cmte_id, zip_code, year][0]
+                t = hash2[cmte_id, zip_code, year][1]
+                c = hash2[cmte_id, zip_code, year][2]
+                with open(outputFile,'a') as fout:
+                    fout.write(cmte_id+'|'+zip_code+'|'+str(year)+'|'+str(p)+'|'+str(t)+'|'+str(c)+'\n')
 
 
-def res_df(extract_list,percentile):
-    df = pd.DataFrame(extract_list,columns=['cmte_id','name','zip_code','transaction_dt','transaction_amt','other_id']).reset_index()
-    df['transaction_dt'] = df['transaction_dt'].apply(lambda x: datetime.datetime.strptime(x,'%m%d%Y'))
-    df['repeated_donor'] = False
-    df['transaction_amt']=df['transaction_amt'].astype(float)
-    df['percentile'] = 0
-    df['tot_amt'] = 0
-    df['tot_num'] = 0
-    df['transaction_year'] = df['transaction_dt']
-    df['transaction_year'] = df['transaction_year'].apply(lambda x: x.year)
-    for idx, row in df.iterrows():
-        previous_df = df[:idx]
-        current_df = df[idx:idx+1]
-        #find repeated donors
-        join_df = previous_df.merge(current_df, on = ['name','zip_code'])
-        if (join_df['transaction_year_x']<join_df['transaction_year_y']).any():
-            df.loc[idx,'repeated_donor'] = True
-        previous_df = df[:idx]
-        current_df = df[idx:idx+1]
-        #repeated donor contribution
-        if (current_df['repeated_donor']==True).any():
-            join_df = previous_df[previous_df['repeated_donor']==True].merge(current_df,on=['cmte_id','zip_code','transaction_year'])
-            num = 1
-            amt = row['transaction_amt']
-            p = 0
-            for idx2, row2 in join_df.iterrows():
-                num = num+1
-                amt = amt+float(row2['transaction_amt_x'])
-            df.loc[idx,'tot_amt'] = amt
-            df.loc[idx,'tot_num'] = num
-            #find percentile transaction_amt
-            p = int(np.ceil(num*percentile))
-            previous_df = df[:idx]
-            previous_df = previous_df[previous_df['repeated_donor']==True]
-            current_df = df[idx:idx+1]
-            current_cmte_id = current_df['cmte_id'].values[0]
-            current_zip = current_df['zip_code'].values[0]
-            current_year = current_df['transaction_year'].values[0]
-            merge_df = previous_df.append(current_df)
-            #group contributions by same cmte_id, zip_code, transaction_year
-            group_df = merge_df[(merge_df['cmte_id']==current_cmte_id) & (merge_df['zip_code']==current_zip) & (merge_df['transaction_year']==current_year)]
-            group_df = group_df.sort_values(['transaction_amt'],ascending=1)
-            #slice row equal to p and get percentile amount
-            percent_value = np.percentile(group_df['transaction_amt'],percentile,interpolation='nearest')
-            df.loc[idx,'percentile'] = percent_value
-    df = df[df['repeated_donor']==True].reset_index()
-    return df
+def hash_repeated(name, zip_code, year, amount, r, cmte_id, hash1):
+    ## function that determine whether the donor is repeat donor
+    l = []
+    if (name, zip_code) in hash1:
+        if year > get_min(hash1[name, zip_code]):
+            r = True
+            l.append(True) # mark as repeated
+        else:
+            for i in hash1[name, zip_code]:
+                if i[0] == True:
+                    r = True
+                    l.append(True)
+                    break
+    else:
+        hash1[name,zip_code] = []
+        l.append(r)
+    l.append(year)
+    l.append(amount)
+    l.append(cmte_id)
+    hash1[name,zip_code].append(l)
+    return r
+
+def hash_calculation(cmte_id, zip_code, year, minHeap, maxHeap, amount, percentile, hash2):
+    l = []
+    total = amount
+    count = 1
+    if (cmte_id, zip_code, year) in hash2:
+        percentile_res = calculate_percentile(percentile,hash2[cmte_id, zip_code, year][3],hash2[cmte_id, zip_code, year][4],amount)
+        hash2[cmte_id, zip_code, year][0] = percentile_res
+        hash2[cmte_id, zip_code, year][1] = hash2[cmte_id, zip_code, year][1] + amount
+        hash2[cmte_id, zip_code, year][2] = hash2[cmte_id, zip_code, year][2] + 1
+    else:
+        percentile_res = calculate_percentile(percentile, minHeap, maxHeap, amount)
+        l.append(percentile_res)
+        l.append(total)
+        l.append(count)
+        l.append(minHeap)
+        l.append(maxHeap)
+        hash2[cmte_id, zip_code, year] = l
+
+
+def calculate_percentile(percentile, minHeap, maxHeap, amount):
+    ## use minHeap and maxHeap to calculate nth percentile amount. 
+    ## maxHeap store elements smaller than or equal to nth percentile.
+    ## minHeap store elements larger than nth percentile.
+    ## nth percentile is the top element of maxHeap
+    if len(maxHeap)== 0 or amount <= maxHeap[0]:
+        maxHeap.heappush(amount)
+    else:
+        minHeap.heappush(amount)
+    count = len(maxHeap)+len(minHeap)
+    count_percentile = math.ceil(float(count)*(0.01*percentile))
+    while count_percentile != len(maxHeap):
+        if count_percentile < len(maxHeap):
+            minHeap.heappush(maxHeap.heappop())
+        else:
+            maxHeap.heappush(minHeap.heappop())
+    return maxHeap[0]
+
+
+class MaxHeapObj(object):
+  def __init__(self,val): self.val = val
+  def __lt__(self,other): return self.val > other.val
+  def __eq__(self,other): return self.val == other.val
+  def __str__(self): return str(self.val)
+
+
+class MinHeap(object):
+  def __init__(self): self.h = []
+  def heappush(self,x): heapq.heappush(self.h,x)
+  def heappop(self): return heapq.heappop(self.h)
+  def __getitem__(self,i): return self.h[i]
+  def __len__(self): return len(self.h)
+
+
+class MaxHeap(MinHeap):
+  def heappush(self,x): heapq.heappush(self.h,MaxHeapObj(x))
+  def heappop(self): return heapq.heappop(self.h).val
+  def __getitem__(self,i): return self.h[i].val
+
+def get_min(l):
+    minimum = l[0][1]
+    for i in l:
+        minimum = min(minimum, i[1])
+    return minimum
+
+
 
 def main(argv):
     if len(argv) < 4 :
@@ -156,16 +196,15 @@ def main(argv):
         inputFile1 = argv[1]
         inputFile2 = argv[2]
         outputFile = argv[3]
-    contribute = extract_cont(inputFile1)
-    percentile = int(extract_percentile(inputFile2))
-    result_df = res_df(contribute,percentile)
-    fout = open(outputFile, "w")
-    for idx, row in result_df.iterrows():
-        fout.write(str(result_df['cmte_id'].iloc[idx])+'|'+str(result_df['zip_code'].iloc[idx])+'|'+str(result_df['transaction_year'].iloc[idx])+'|'+str(int(round(result_df['percentile'].iloc[idx])))+'|'+str(int(round(result_df['tot_amt'].iloc[idx])))+'|'+str(result_df['tot_num'].iloc[idx])+'\n')
+        #inputFile1 = './input/test2.txt'
+        #inputFile2 = './input/percentile.txt'
+        #outputFile = './output/repeat_donors.txt'
+    fout = outputFile
+    contribute = run(inputFile1, inputFile2, outputFile)
 
 if __name__=="__main__":
     start_time = time.time()
     argv = sys.argv
     main(argv)
+    #main('python ./src/donation-analytics.py ./input/itcont.txt ./input/percentile.txt ./output/repeat_donors.txt')
     print("--- %s seconds ---" % (time.time() - start_time))
-
