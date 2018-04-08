@@ -23,9 +23,33 @@ python ./src/donation_analytics.py ./input/itcont.txt ./input/percentile.txt ./o
 
 # Methodology and Algorithm
 
-The program read in file line by line, and skip records whose fields are empty or malformed. After skipping some records, the program keep the rest of records in list. Then, convert the list to dataframe with columns cmte_id','name','zip_code','transaction_dt','transaction_amt','other_id','transaction_year'. 
+1. Data Cleaning:
 
-Since data flows in a real-time manner, the program iterate the dataframe row by row. 'repeated_donor' column is added to the dataframe to record whether the incoming record is a repeated donor. To find repeated donors, it is assumed that if any transaction year in previous dataframe is smaller than the current dataframe with same cmte_id and zip, then the current record donor is repeated donor, and 'repeated_donor' column is marked as true. If the current record donor is repeated donor,then group dataframe by cmte_id, zip_code, and transaction_year. Add the number and amount to the 'total_' columns, and then sort amount column, calculate the percentile value, and assign it to percentile column.
+The program read in file line by line, and skip records whose fields are empty or malformed.
+
+2. Find repeated donors
+
+Data Structure: HashMap
+
+Time Complexity: O(1)
+Space Complexity: O(n)
+
+The program used two HashMap, where the first HashMap find repeated donors and the second HashMap store calculated value. 
+
+HashMap1 Key: name, zip code, value: list {repeated, year, amount, cmte_id}
+HashMap2 Key: cmte_id, zip, year, value: list {percentile, total, count,minHeap, maxHeap}
+
+
+3. Calculate given percentile value
+
+Data Structure: PriorityQueue
+
+Time complexity: O(log(n))
+Space complexity: O(n)
+
+Since data flows in a real-time manner, the program used priorityqueue with minheap and maxheap to calculate given percentile value. maxHeap is used to store elements smaller than or equal to nth percentile. minHeap store elements larger than nth percentile. The given percentile value is maintained as the top element of maxHeap. The aglolrithm is if incoming amount is smaller than top element of maxHeap, then add it to maxHeap. If it is larger than top element of minHeap, then add it to minHeap. At the meantime, maintain the count of maxHeap to be consistent with given percentile count.
+
+
 
 
 
